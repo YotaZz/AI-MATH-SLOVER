@@ -1,0 +1,10 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* 加上这一段防止高度塌陷导致无限滚动 */
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  overflow: hidden; /* 防止整个页面出现双滚动条 */
+}

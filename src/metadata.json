@@ -1,0 +1,5 @@
+{
+  "name": "AI Math Solver",
+  "description": "A professional React application for handwritten math problem solving using AI (Qwen/Gemini), featuring a digital whiteboard, streaming responses, and detailed reasoning.",
+  "requestFramePermissions": []
+}
