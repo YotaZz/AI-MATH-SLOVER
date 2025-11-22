@@ -37,10 +37,13 @@ const xorDecrypt = (cipherHex: string, key: string): string => {
 
 const SettingsModal: React.FC<Props> = ({ config, onSave, onClose }) => {
   const [localConfig, setLocalConfig] = useState(config);
-  const [secretKey, setSecretKey] = useState("");
+  const [secretKey, setSecretKey] = useState(config.secretKey || "");
   const [showApiKeys, setShowApiKeys] = useState(false);
 
-  useEffect(() => { setLocalConfig(config); }, [config]);
+  useEffect(() => { 
+    setLocalConfig(config);
+    setSecretKey(config.secretKey || "");
+  }, [config]);
 
   const handleSave = () => {
     let finalConfig = { ...localConfig };
@@ -51,6 +54,9 @@ const SettingsModal: React.FC<Props> = ({ config, onSave, onClose }) => {
         finalConfig.apiKeyDashScope = xorDecrypt(ENCRYPTED_KEYS.Dashscope, inputKey);
         finalConfig.apiKeyGoogle = xorDecrypt(ENCRYPTED_KEYS.Google, inputKey);
         finalConfig.apiKeyDMX = xorDecrypt(ENCRYPTED_KEYS.DMXAPI, inputKey);
+        finalConfig.secretKey = inputKey;
+    } else {
+        finalConfig.secretKey = "";
     }
 
     if (!finalConfig.apiKeyDashScope && !finalConfig.apiKeyGoogle && !finalConfig.apiKeyDMX) {
@@ -61,6 +67,8 @@ const SettingsModal: React.FC<Props> = ({ config, onSave, onClose }) => {
   };
 
   const currentMapping = MODEL_MAPPINGS[localConfig.modelFamily];
+  // Strict check for 'qwen' family to avoid showing variants for 'qwen3_8b'
+  const isQwenSeries = localConfig.modelFamily === 'qwen';
 
   return (
     <div className="fixed inset-0 bg-black/50 z-[100] flex items-center justify-center p-4 backdrop-blur-sm">
@@ -84,9 +92,6 @@ const SettingsModal: React.FC<Props> = ({ config, onSave, onClose }) => {
                   value={secretKey}
                   onChange={e => setSecretKey(e.target.value)}
                 />
-                <div className="absolute right-3 top-2.5 text-xs text-blue-400 select-none pointer-events-none">
-                   保存自动应用
-                </div>
             </div>
           </div>
 
@@ -125,7 +130,7 @@ const SettingsModal: React.FC<Props> = ({ config, onSave, onClose }) => {
                         />
                     </div>
                     <div>
-                        <label className="block text-xs font-medium text-gray-500 mb-1">DMXAPI Key (DeepSeek)</label>
+                        <label className="block text-xs font-medium text-gray-500 mb-1">DMXAPI Key (GLM/Qwen)</label>
                         <input 
                             type="password" 
                             className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none text-sm" 
@@ -147,26 +152,30 @@ const SettingsModal: React.FC<Props> = ({ config, onSave, onClose }) => {
                     value={localConfig.modelVision}
                     onChange={e => setLocalConfig({...localConfig, modelVision: e.target.value})}
                 >
-                    <option value="qwen3-vl-plus">qwen3-vl-plus (DashScope)</option>
-                    <option value="gemini-2.5-flash">gemini-2.5-flash (Google)</option>
-                    <option value="DeepSeek-OCR-Free">DeepSeek-OCR-Free (DMX)</option>
+                    <option value="qwen3-vl-plus">qwen3-vl-plus</option>
+                    <option value="glm-4.1v-thinking-flash">glm-4.1v-thinking-flash</option>
+                    <option value="gemini-2.5-flash">gemini-2.5-flash</option>
                 </select>
             </div>
             <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">推理模型系列 (Solver Family)</label>
+                <label className="block text-sm font-medium text-gray-700 mb-2">推理模型(Solver)</label>
                 <select 
                     className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-blue-500 outline-none bg-white mb-2"
                     value={localConfig.modelFamily}
                     onChange={e => setLocalConfig({...localConfig, modelFamily: e.target.value as any})}
                 >
-                    <option value="qwen">Qwen 系列</option>
-                    <option value="gemini">Gemini 系列</option>
+                    <option value="qwen">Qwen系列</option>
+                    <option value="gemini">gemini-2.5.pro</option>
+                    <option value="glm">GLM-4.5-Flash</option>
+                    <option value="qwen3_8b">Qwen3-8B</option>
                 </select>
                 
-                <div className="bg-gray-50 rounded-lg p-3 text-xs text-gray-500 font-mono border border-gray-100 space-y-1">
-                    <div className="flex justify-between"><span>快速模式:</span><span className="font-bold text-gray-700">{currentMapping.fast}</span></div>
-                    <div className="flex justify-between"><span>深度思考:</span><span className="font-bold text-gray-700">{currentMapping.thinking}</span></div>
-                </div>
+                {isQwenSeries && (
+                  <div className="bg-gray-50 rounded-lg p-3 text-xs text-gray-500 font-mono border border-gray-100 space-y-1">
+                      <div className="flex justify-between"><span>快速模式:</span><span className="font-bold text-gray-700">{currentMapping.fast}</span></div>
+                      <div className="flex justify-between"><span>深度思考:</span><span className="font-bold text-gray-700">{currentMapping.thinking}</span></div>
+                  </div>
+                )}
             </div>
           </div>
         </div>

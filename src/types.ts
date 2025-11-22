@@ -1,5 +1,5 @@
 
-export type ModelFamily = 'qwen' | 'gemini';
+export type ModelFamily = 'qwen' | 'gemini' | 'glm' | 'qwen3_8b';
 
 export interface AppConfig {
   apiKeyDashScope: string;
@@ -7,6 +7,7 @@ export interface AppConfig {
   apiKeyDMX: string; // New DMXAPI Key
   modelVision: string;
   modelFamily: ModelFamily;
+  secretKey?: string;
 }
 
 export interface HistoryItem {
@@ -17,6 +18,7 @@ export interface HistoryItem {
   sol: string;
   chat: ChatMessage[];
   model: string;
+  verification?: VerificationResult; // Store verification result in history
 }
 
 export interface ChatMessage {
@@ -30,21 +32,38 @@ export interface StreamResponse {
   reasoning: string;
 }
 
+export interface VerificationResult {
+  status: 'idle' | 'verifying' | 'success' | 'error';
+  content: string; // The full text response (reasoning + result)
+  isCorrect?: boolean; // Parsed result
+  summary?: string; // Short summary
+  modelUsed?: string;
+}
+
 export const DEFAULT_CONFIG: AppConfig = {
   apiKeyDashScope: "",
   apiKeyGoogle: "",
   apiKeyDMX: "",
   modelVision: "qwen3-vl-plus",
-  modelFamily: "qwen"
+  modelFamily: "qwen",
+  secretKey: ""
 };
 
 export const MODEL_MAPPINGS = {
   qwen: {
     fast: 'qwen3-max',
-    thinking: 'qwen3-max-preview' // or deepseek-r1 distills depending on provider
+    thinking: 'qwen3-max-preview'
   },
   gemini: {
-    fast: 'gemini-2.5-flash',
+    fast: 'gemini-2.5-pro',
     thinking: 'gemini-2.5-pro'
+  },
+  glm: {
+    fast: 'glm-4.5-flash',
+    thinking: 'glm-4.5-flash' // GLM usually handles complex tasks well, mapped same for now
+  },
+  qwen3_8b: {
+    fast: 'qwen3-8b',
+    thinking: 'qwen3-8b' // Will use enable_thinking param in API
   }
 };

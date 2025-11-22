@@ -1,7 +1,8 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Brain, PenLine, Check, Edit3, StopCircle, MessageSquare } from 'lucide-react';
+import { Brain, PenLine, Check, Edit3, StopCircle, MessageSquare, ShieldCheck, XCircle, Loader2, ChevronDown, ChevronRight } from 'lucide-react';
 import MarkdownRenderer from './MarkdownRenderer';
+import type { VerificationResult } from '../types';
 
 export type PanelState = 'empty' | 'thinking' | 'verify' | 'result';
 
@@ -12,8 +13,9 @@ interface Props {
   problemText: string;
   solutionText: string;
   reasoningText: string;
-  isGenerating: boolean; // Replaced isThinkingUpdate to strictly control cursor
+  isGenerating: boolean; 
   modelName?: string;
+  verificationResult?: VerificationResult;
   onProblemChange: (text: string) => void;
   onConfirmProblem: () => void;
   onCancelVerify: () => void;
@@ -25,11 +27,20 @@ interface Props {
 
 const ResultPanel: React.FC<Props> = ({
   state, loadingStep, loadingDesc, problemText, solutionText, reasoningText, 
-  isGenerating, modelName, onProblemChange, onConfirmProblem, onCancelVerify, onEditRequest, onStopGeneration,
+  isGenerating, modelName, verificationResult,
+  onProblemChange, onConfirmProblem, onCancelVerify, onEditRequest, onStopGeneration,
   onChatToggle, isChatOpen
 }) => {
   
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const [isVerifyExpanded, setIsVerifyExpanded] = useState(false);
+
+  // Auto-scroll to bottom when generating content or reasoning updates
+  useEffect(() => {
+    if (isGenerating && state === 'result' && scrollContainerRef.current) {
+        scrollContainerRef.current.scrollTop = scrollContainerRef.current.scrollHeight;
+    }
+  }, [solutionText, reasoningText, isGenerating, state]);
   
   if (state === 'thinking') {
     return (
@@ -91,6 +102,73 @@ const ResultPanel: React.FC<Props> = ({
     );
   }
 
+  // Helper for Verification UI
+  const renderVerification = () => {
+    if (!verificationResult || verificationResult.status === 'idle') return null;
+
+    const { status, isCorrect, summary, content, modelUsed } = verificationResult;
+    
+    let bgColor = 'bg-gray-50';
+    let borderColor = 'border-gray-200';
+    // Use static icon for verification loading to avoid distraction
+    let icon = <ShieldCheck size={16} className="text-gray-300" />;
+    let title = "正在校验...";
+    
+    if (status === 'success') {
+       if (isCorrect === true) {
+           bgColor = 'bg-green-50';
+           borderColor = 'border-green-200';
+           icon = <ShieldCheck size={16} className="text-green-600" />;
+           title = "校验通过：结果正确";
+       } else if (isCorrect === false) {
+           bgColor = 'bg-red-50';
+           borderColor = 'border-red-200';
+           icon = <XCircle size={16} className="text-red-600" />;
+           title = "校验警告：可能存在错误";
+       } else {
+           // Success but parse failed or ambiguous
+           title = "校验完成";
+           icon = <ShieldCheck size={16} className="text-gray-600" />;
+       }
+    } else if (status === 'error') {
+        bgColor = 'bg-gray-50';
+        icon = <XCircle size={16} className="text-gray-400" />;
+        title = "校验服务不可用";
+    }
+
+    return (
+        <div className={`mt-6 border ${borderColor} ${bgColor} rounded-lg overflow-hidden transition-all duration-300`}>
+             <div 
+                className="px-4 py-3 flex items-center justify-between cursor-pointer hover:bg-white/50"
+                onClick={() => setIsVerifyExpanded(!isVerifyExpanded)}
+             >
+                 <div className="flex items-center gap-2">
+                     {icon}
+                     <div className="flex flex-col">
+                         <span className={`text-sm font-bold ${status === 'success' && isCorrect ? 'text-green-700' : status === 'success' && isCorrect === false ? 'text-red-700' : 'text-gray-700'}`}>
+                             {title}
+                         </span>
+                         {status === 'verifying' && <span className="text-[10px] text-gray-400">{modelUsed ? `Model: ${modelUsed}` : ''}</span>}
+                     </div>
+                 </div>
+                 <div className="flex items-center gap-2">
+                     {summary && status === 'success' && !isVerifyExpanded && (
+                         <span className="text-xs text-gray-500 truncate max-w-[150px] md:max-w-xs">{summary}</span>
+                     )}
+                     {isVerifyExpanded ? <ChevronDown size={16} className="text-gray-400" /> : <ChevronRight size={16} className="text-gray-400" />}
+                 </div>
+             </div>
+             
+             {isVerifyExpanded && (
+                 <div className="border-t border-gray-200/50 p-4 bg-white/50 text-sm">
+                     {status === 'verifying' && !content && <div className="text-gray-400 text-xs italic">正在分析解题步骤...</div>}
+                     {content && <MarkdownRenderer content={content} className="text-gray-700" />}
+                 </div>
+             )}
+        </div>
+    );
+  };
+
   return (
     <div className="h-full flex flex-col relative">
       <div className="sticky top-0 z-10 bg-blue-50 border-b border-blue-100 px-4 py-2 flex items-center justify-between shadow-sm shrink-0">
@@ -104,7 +182,7 @@ const ResultPanel: React.FC<Props> = ({
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-6 pb-32 custom-scrollbar">
+      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto p-6 pb-32 custom-scrollbar">
         {reasoningText && (
            <details className="mb-4 bg-gray-50 border border-gray-200 rounded-lg overflow-hidden text-sm group" open={isGenerating}>
              <summary className="px-4 py-2 bg-gray-100 cursor-pointer font-semibold text-gray-600 select-none flex items-center hover:bg-gray-200 transition">
@@ -118,18 +196,23 @@ const ResultPanel: React.FC<Props> = ({
         
         <div className={`${isGenerating && !reasoningText ? 'typing-cursor' : ''}`}>
            {/* When reasoning is active, main content isn't typing. When reasoning done (or none), main content types. */}
-           {/* Actually simplified: just let markdown renderer handle static content, cursor is appended to container if streaming main content */}
            <div className={isGenerating && solutionText ? 'typing-cursor' : ''}>
               <MarkdownRenderer content={solutionText} />
            </div>
         </div>
-        <div ref={messagesEndRef} />
+
+        {/* Verification Section */}
+        {renderVerification()}
+
       </div>
 
       {/* Model Badge Floating */}
       {modelName && (
-        <div className="absolute bottom-6 left-6 z-20 bg-white/90 backdrop-blur px-3 py-1 rounded-full shadow-md border border-gray-200 text-xs text-gray-500 font-mono pointer-events-none">
-          {modelName}
+        <div className="absolute bottom-6 left-6 z-20 bg-white/90 backdrop-blur px-3 py-1 rounded-full shadow-md border border-gray-200 text-xs text-gray-500 font-mono pointer-events-none flex flex-col items-start gap-0.5">
+          <span>{modelName}</span>
+          {verificationResult?.status === 'success' && verificationResult.modelUsed && (
+               <span className="text-[10px] text-gray-400 border-t border-gray-100 pt-0.5 w-full">Checked by {verificationResult.modelUsed}</span>
+          )}
         </div>
       )}
 

@@ -10,9 +10,9 @@ import SettingsModal from './components/SettingsModal';
 import HistoryDrawer from './components/HistoryDrawer';
 import ChatWindow from './components/ChatWindow';
 import { DEFAULT_CONFIG } from './types';
-import type { AppConfig, HistoryItem, ChatMessage } from './types';
+import type { AppConfig, HistoryItem, ChatMessage, VerificationResult } from './types';
 import { loadConfig, saveConfig, loadHistory, saveHistoryItem, clearHistory, updateLatestHistoryChat } from './services/storageService';
-import { apiVisionParse, apiSolveProblem, apiChat, getSolverModel } from './services/apiService';
+import { apiVisionParse, apiSolveProblem, apiChat, getSolverModel, apiVerifySolution } from './services/apiService';
 
 const App: React.FC = () => {
   // State
@@ -40,6 +40,9 @@ const App: React.FC = () => {
   const [isChatLoading, setIsChatLoading] = useState(false);
   const [isInputFocused, setIsInputFocused] = useState(false); // State for input expansion
 
+  // Verification State
+  const [verificationResult, setVerificationResult] = useState<VerificationResult>({ status: 'idle', content: '' });
+
   // Refs
   const canvasRef = useRef<CanvasHandle>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -53,6 +56,13 @@ const App: React.FC = () => {
     }
     setHistoryItems(loadHistory());
   }, []);
+
+  // Enforce thinking mode for Gemini models (as gemini-2.5-pro requires thinking)
+  useEffect(() => {
+    if (config.modelFamily === 'gemini') {
+      setIsThinkingEnabled(true);
+    }
+  }, [config.modelFamily]);
 
   // Determine current models for display
   const currentSolverModel = getSolverModel(config, isThinkingEnabled);
@@ -73,6 +83,31 @@ const App: React.FC = () => {
     }
     setIsGenerating(false);
     if (panelState === 'thinking') setPanelState('empty');
+    setVerificationResult({ status: 'idle', content: '' });
+  };
+
+  // Extract JSON from verifier output
+  const parseVerificationOutput = (text: string): { isCorrect?: boolean, summary?: string } => {
+     try {
+         // Attempt to find JSON code block
+         const jsonMatch = text.match(/```json\n([\s\S]*?)\n```/);
+         if (jsonMatch && jsonMatch[1]) {
+             const json = JSON.parse(jsonMatch[1]);
+             // STRICT conversion to boolean to ensure green/red state rendering
+             let isCorrect = json.is_correct;
+             if (isCorrect === undefined) isCorrect = json.isCorrect;
+             
+             if (typeof isCorrect === 'string') {
+                 isCorrect = isCorrect.toLowerCase() === 'true';
+             }
+             
+             return { isCorrect: !!isCorrect, summary: json.summary };
+         }
+         // Fallback loose parsing
+         if (text.includes('"is_correct": true') || text.includes('"correct": true')) return { isCorrect: true };
+         if (text.includes('"is_correct": false') || text.includes('"correct": false')) return { isCorrect: false };
+     } catch (e) { console.error("Verify parse error", e); }
+     return {};
   };
 
   const handleSolve = async () => {
@@ -89,6 +124,10 @@ const App: React.FC = () => {
 
     if (isPanelCollapsed) setIsPanelCollapsed(false);
     
+    // Start new abort controller immediately for the whole process (vision + solve + verify)
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
     setPanelState('thinking');
     setLoadingStep("正在识别图片");
     setLoadingDesc(config.modelVision);
@@ -98,17 +137,23 @@ const App: React.FC = () => {
     setChatHistory([]);
     setActiveModel("");
     setIsGenerating(true);
+    setVerificationResult({ status: 'idle', content: '' });
+
+    let finalCombinedText = "";
+    let finalSolution = "";
 
     try {
         // 1. Vision
-        const extractedText = await apiVisionParse(b64, config);
+        const extractedText = await apiVisionParse(b64, config, controller.signal);
         
+        if (controller.signal.aborted) return;
+
         // Combine vision result with manual input
-        const combinedText = additionalText.trim() 
+        finalCombinedText = additionalText.trim() 
             ? `${extractedText}\n\n${additionalText}` 
             : extractedText;
 
-        setProblemText(combinedText);
+        setProblemText(finalCombinedText);
         
         // 2. Solving
         setLoadingStep("正在求解");
@@ -118,70 +163,154 @@ const App: React.FC = () => {
         setPanelState('result');
         setActiveModel(currentSolverModel);
         
-        abortControllerRef.current = new AbortController();
-        
-        const solverResponse = await apiSolveProblem(
-            combinedText, 
+        await apiSolveProblem(
+            finalCombinedText, 
             config, 
             isThinkingEnabled, 
             (content, reasoning, isReas) => {
                 setSolutionText(content);
                 setReasoningText(reasoning);
+                finalSolution = content; // Keep track for verification
             },
-            abortControllerRef.current.signal
+            controller.signal
         );
 
-        abortControllerRef.current = null;
         setIsGenerating(false);
         
-        // Save History
-        const newItem: HistoryItem = {
-            id: Date.now(),
-            time: new Date().toLocaleString(),
-            img: b64,
-            prob: combinedText,
-            sol: solverResponse.content,
-            chat: [],
-            model: currentSolverModel
-        };
-        saveHistoryItem(newItem);
-        setHistoryItems(loadHistory());
+        // 3. Verification (Auto trigger)
+        if (!controller.signal.aborted && finalSolution) {
+            setVerificationResult({ status: 'verifying', content: '' });
+            
+            try {
+                let fullVerifyText = "";
+                const meta = await apiVerifySolution(
+                    finalCombinedText,
+                    finalSolution,
+                    currentSolverModel,
+                    config,
+                    (content) => {
+                        fullVerifyText = content;
+                        setVerificationResult(prev => ({ ...prev, content: content }));
+                    },
+                    controller.signal
+                );
+                
+                const parsed = parseVerificationOutput(fullVerifyText);
+                const finalVerifyRes: VerificationResult = {
+                    status: 'success',
+                    content: fullVerifyText,
+                    isCorrect: parsed.isCorrect,
+                    summary: parsed.summary,
+                    modelUsed: meta.modelUsed
+                };
+                setVerificationResult(finalVerifyRes);
+                
+                 // Save History (with verification)
+                const newItem: HistoryItem = {
+                    id: Date.now(),
+                    time: new Date().toLocaleString(),
+                    img: b64,
+                    prob: finalCombinedText,
+                    sol: finalSolution,
+                    chat: [],
+                    model: currentSolverModel,
+                    verification: finalVerifyRes
+                };
+                saveHistoryItem(newItem);
+                setHistoryItems(loadHistory());
+                
+            } catch (ve) {
+                console.error("Verification failed", ve);
+                setVerificationResult(prev => ({ ...prev, status: 'error', summary: '校验服务无法连接' }));
+                 // Save History (without verification result if failed, or partial)
+                const newItem: HistoryItem = {
+                    id: Date.now(),
+                    time: new Date().toLocaleString(),
+                    img: b64,
+                    prob: finalCombinedText,
+                    sol: finalSolution,
+                    chat: [],
+                    model: currentSolverModel
+                };
+                saveHistoryItem(newItem);
+                setHistoryItems(loadHistory());
+            }
+        }
+        
+        abortControllerRef.current = null;
 
     } catch (e: any) {
         if (e.name === 'AbortError') return;
         console.error(e);
         setIsGenerating(false);
-        setPanelState('empty'); 
+        // Only reset to empty if we haven't even got the problem text (vision failed)
+        if (!problemText) setPanelState('empty'); 
         alert(`错误: ${e.message}`);
     }
   };
 
   const handleConfirmVerify = async () => {
       abortCurrent();
+      
+      const controller = new AbortController();
+      abortControllerRef.current = controller;
+
       setPanelState('result');
       setSolutionText("");
       setReasoningText("");
       setChatHistory([]);
       setActiveModel(currentSolverModel);
       setIsGenerating(true);
+      setVerificationResult({ status: 'idle', content: '' });
       
-      abortControllerRef.current = new AbortController();
+      let finalSolution = "";
+
       try {
-          const solverResponse = await apiSolveProblem(
+          await apiSolveProblem(
               problemText,
               config,
               isThinkingEnabled,
               (content, reasoning, isReas) => {
                   setSolutionText(content);
                   setReasoningText(reasoning);
+                  finalSolution = content;
               },
-              abortControllerRef.current.signal
+              controller.signal
           );
+          setIsGenerating(false);
+
+          // Trigger Verification again
+          if (!controller.signal.aborted && finalSolution) {
+            setVerificationResult({ status: 'verifying', content: '' });
+            try {
+                let fullVerifyText = "";
+                const meta = await apiVerifySolution(
+                    problemText,
+                    finalSolution,
+                    currentSolverModel,
+                    config,
+                    (content) => {
+                         fullVerifyText = content;
+                         setVerificationResult(prev => ({ ...prev, content: content }));
+                    },
+                    controller.signal
+                );
+                const parsed = parseVerificationOutput(fullVerifyText);
+                setVerificationResult({
+                    status: 'success',
+                    content: fullVerifyText,
+                    isCorrect: parsed.isCorrect,
+                    summary: parsed.summary,
+                    modelUsed: meta.modelUsed
+                });
+            } catch (ve) {
+                setVerificationResult(prev => ({ ...prev, status: 'error' }));
+            }
+          }
+
           abortControllerRef.current = null;
       } catch (e: any) {
           if (e.name !== 'AbortError') alert(e.message);
-      } finally {
-          setIsGenerating(false);
       }
   };
 
@@ -240,6 +369,7 @@ const App: React.FC = () => {
       setChatHistory(item.chat || []);
       setPanelState('result');
       setActiveModel(item.model);
+      setVerificationResult(item.verification || { status: 'idle', content: '' });
       setIsHistoryOpen(false);
       if(isPanelCollapsed) setIsPanelCollapsed(false);
       setAdditionalText(""); // Reset manual input when loading history
@@ -251,6 +381,8 @@ const App: React.FC = () => {
           setHistoryItems([]);
       }
   };
+
+  const isGemini = config.modelFamily === 'gemini';
 
   return (
     <div className="h-screen flex flex-col overflow-hidden bg-[#f3f4f6] font-sans text-gray-800">
@@ -272,8 +404,6 @@ const App: React.FC = () => {
             </div>
 
             {/* Bottom Controls: Centered based on visible canvas area */}
-            {/* If Panel is collapsed (hidden), controls should be at right: 24px */}
-            {/* If Panel is open (50% width), controls should be at right: 50% + 24px (effectively center of screen) */}
             <div 
                 className="absolute bottom-6 z-10 flex flex-col items-end gap-3 transition-all duration-300 ease-in-out" 
                 style={{ 
@@ -281,8 +411,9 @@ const App: React.FC = () => {
                 }}
             >
                 <div 
-                    onClick={() => setIsThinkingEnabled(!isThinkingEnabled)}
-                    className="bg-white/90 backdrop-blur px-3 py-2 rounded-full shadow-md border border-gray-200 flex items-center cursor-pointer transition hover:bg-white select-none"
+                    onClick={() => !isGemini && setIsThinkingEnabled(!isThinkingEnabled)}
+                    className={`bg-white/90 backdrop-blur px-3 py-2 rounded-full shadow-md border border-gray-200 flex items-center transition hover:bg-white select-none ${isGemini ? 'opacity-80 cursor-not-allowed' : 'cursor-pointer'}`}
+                    title={isGemini ? "Gemini 2.5 Pro 强制开启思考模式" : "切换思考模式"}
                 >
                     <span className="text-xs font-bold text-gray-500 uppercase mr-2">深度思考</span>
                     <div className={`relative w-10 h-5 transition-all duration-300 rounded-full ${isThinkingEnabled ? 'bg-blue-500' : 'bg-gray-300'}`}>
@@ -330,47 +461,51 @@ const App: React.FC = () => {
 
         {/* Right: Result Panel (Absolute overlay) */}
         <div 
-            className={`absolute right-0 top-0 bottom-0 z-20 bg-white border-l border-gray-200 shadow-2xl transition-transform duration-300 ease-in-out flex flex-col
+            className={`absolute right-0 top-0 bottom-0 z-20 transition-transform duration-300 ease-in-out overflow-visible
                        ${isPanelCollapsed ? 'translate-x-full' : 'translate-x-0'}`}
             style={{ width: '50%', maxWidth: '100%' }}
         >
-            {/* Toggle Splitter Button (Attached to panel) */}
+            {/* Toggle Splitter Button (Outside the panel) */}
             <button 
                 onClick={togglePanel}
-                className="absolute top-1/2 -left-6 transform -translate-y-1/2 z-50 
-                           bg-white border border-gray-200 shadow-md text-gray-500 hover:text-blue-600 
+                className="absolute top-1/2 -left-[23px] transform -translate-y-1/2 z-50 
+                           bg-white border-l border-y border-gray-200 border-r-0 shadow-sm
                            w-6 h-12 rounded-l-xl flex items-center justify-center transition-colors"
                 title={isPanelCollapsed ? "展开" : "折叠"}
             >
                 {isPanelCollapsed ? <ChevronLeft size={14} /> : <ChevronRight size={14} />}
             </button>
-
-            <ResultPanel 
-                state={panelState}
-                loadingStep={loadingStep}
-                loadingDesc={loadingDesc}
-                problemText={problemText}
-                solutionText={solutionText}
-                reasoningText={reasoningText}
-                isGenerating={isGenerating}
-                modelName={activeModel}
-                onProblemChange={setProblemText}
-                onConfirmProblem={handleConfirmVerify}
-                onCancelVerify={() => setPanelState(solutionText ? 'result' : 'empty')}
-                onEditRequest={() => setPanelState('verify')}
-                onStopGeneration={abortCurrent}
-                onChatToggle={() => setIsChatOpen(!isChatOpen)}
-                isChatOpen={isChatOpen}
-            />
             
-            {/* Chat Window Overlay on Right Panel */}
-            <ChatWindow 
-                isOpen={isChatOpen} 
-                onClose={() => setIsChatOpen(false)} 
-                messages={chatHistory}
-                isLoading={isChatLoading}
-                onSend={handleChatSend}
-            />
+            {/* Inner Content Wrapper (This handles the clipping) */}
+            <div className="w-full h-full overflow-hidden relative flex flex-col bg-white border-l border-gray-200 shadow-2xl">
+                <ResultPanel 
+                    state={panelState}
+                    loadingStep={loadingStep}
+                    loadingDesc={loadingDesc}
+                    problemText={problemText}
+                    solutionText={solutionText}
+                    reasoningText={reasoningText}
+                    isGenerating={isGenerating}
+                    modelName={activeModel}
+                    verificationResult={verificationResult}
+                    onProblemChange={setProblemText}
+                    onConfirmProblem={handleConfirmVerify}
+                    onCancelVerify={() => setPanelState(solutionText ? 'result' : 'empty')}
+                    onEditRequest={() => setPanelState('verify')}
+                    onStopGeneration={abortCurrent}
+                    onChatToggle={() => setIsChatOpen(!isChatOpen)}
+                    isChatOpen={isChatOpen}
+                />
+                
+                {/* Chat Window Overlay on Right Panel */}
+                <ChatWindow 
+                    isOpen={isChatOpen} 
+                    onClose={() => setIsChatOpen(false)} 
+                    messages={chatHistory}
+                    isLoading={isChatLoading}
+                    onSend={handleChatSend}
+                />
+            </div>
         </div>
 
       </main>

@@ -15,7 +15,7 @@ const Header: React.FC<Props> = ({ onHistoryClick, onSettingsClick }) => {
           <Calculator size={20} />
         </div>
         <h1 className="text-lg font-bold text-gray-800 hidden sm:block">
-          AI 数学手写解答 <span className="text-xs text-gray-400 font-normal px-1 border border-gray-200 rounded ml-2">Qwen & Gemini</span>
+          AI 数学计算器 <span className="text-xs text-gray-400 font-normal px-1 border border-gray-200 rounded ml-2">Qwen & Gemini</span>
         </h1>
       </div>
       <div className="flex items-center gap-3">

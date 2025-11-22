@@ -14,11 +14,12 @@ interface Props {
 
 const ChatWindow: React.FC<Props> = ({ isOpen, messages, isLoading, onClose, onSend }) => {
   const [input, setInput] = useState("");
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (isOpen) {
-        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (isOpen && scrollContainerRef.current) {
+        // Use scrollTop for contained scrolling instead of scrollIntoView which causes page shifts
+        scrollContainerRef.current.scrollTop = scrollContainerRef.current.scrollHeight;
     }
   }, [messages, isOpen]);
 
@@ -41,7 +42,7 @@ const ChatWindow: React.FC<Props> = ({ isOpen, messages, isLoading, onClose, onS
             <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition-colors"><X size={18} /></button>
         </div>
         
-        <div className="flex-1 overflow-y-auto p-4 space-y-3 text-sm custom-scrollbar bg-white">
+        <div ref={scrollContainerRef} className="flex-1 overflow-y-auto p-4 space-y-3 text-sm custom-scrollbar bg-white">
             <div className="text-center text-gray-400 text-xs my-2">基于当前题目的上下文对话</div>
             
             {messages.map((msg, idx) => (
@@ -68,7 +69,6 @@ const ChatWindow: React.FC<Props> = ({ isOpen, messages, isLoading, onClose, onS
                     </div>
                 </div>
             )}
-            <div ref={messagesEndRef} />
         </div>
         
         <form onSubmit={handleSubmit} className="p-3 border-t border-gray-100 shrink-0">
