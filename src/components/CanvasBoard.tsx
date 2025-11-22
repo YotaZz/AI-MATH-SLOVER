@@ -264,6 +264,7 @@ const CanvasBoard = forwardRef<CanvasHandle, Props>(({ onStateChange, isPanelCol
         ref={containerRef} 
         className="w-full h-full relative bg-white touch-none overflow-hidden"
         style={{ cursor: tool === 'pen' ? CURSOR_PEN : CURSOR_ERASER }}
+        onContextMenu={(e) => e.preventDefault()}
     >
       <canvas
         ref={canvasRef}

@@ -173,7 +173,7 @@ const ResultPanel: React.FC<Props> = ({
     <div className="h-full flex flex-col relative">
       <div className="sticky top-0 z-10 bg-blue-50 border-b border-blue-100 px-4 py-2 flex items-center justify-between shadow-sm shrink-0">
         <div className="flex items-center gap-2 overflow-hidden mr-2 flex-1 min-w-0">
-          <div className="truncate text-sm text-gray-700 font-mono" title={problemText}>
+          <div className="truncate text-sm text-gray-700 font-mono select-text" title={problemText}>
              {problemText.length > 50 ? problemText.substring(0, 50) + '...' : problemText}
           </div>
         </div>
@@ -188,7 +188,7 @@ const ResultPanel: React.FC<Props> = ({
              <summary className="px-4 py-2 bg-gray-100 cursor-pointer font-semibold text-gray-600 select-none flex items-center hover:bg-gray-200 transition">
                <Brain size={14} className="mr-2 text-blue-500" /> 深度思考过程
              </summary>
-             <div className={`p-4 text-gray-600 font-mono whitespace-pre-wrap bg-white border-t border-gray-200 ${isGenerating ? 'typing-cursor' : ''}`}>
+             <div className={`p-4 text-gray-600 font-mono whitespace-pre-wrap bg-white border-t border-gray-200 select-text ${isGenerating ? 'typing-cursor' : ''}`}>
                {reasoningText}
              </div>
            </details>
