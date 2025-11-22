@@ -1,8 +1,9 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import { HashRouter } from 'react-router-dom'; // 👈 1. 新增这一行
+import { HashRouter } from 'react-router-dom'; 
 import App from './App';
 import './index.css';
+import 'katex/dist/katex.min.css'; // 👈 3. 必须添加这行！修复公式样式
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {
@@ -12,7 +13,6 @@ if (!rootElement) {
 const root = ReactDOM.createRoot(rootElement);
 root.render(
   <React.StrictMode>
-    {/* 👇 2. 用 HashRouter 包裹 App，这样 GitHub Pages 才能识别路径 */}
     <HashRouter>
       <App />
     </HashRouter>
